@@ -1,0 +1,37 @@
+@echo off
+echo Stopping Explorer...
+taskkill /F /IM explorer.exe >nul 2>&1
+timeout /t 2 /nobreak >nul
+
+echo Cleaning old DLL...
+if exist ContextMenuProfiler.Hook.dll (
+    del /F /Q ContextMenuProfiler.Hook.dll >nul 2>&1
+    if exist ContextMenuProfiler.Hook.dll (
+        echo ERROR: ContextMenuProfiler.Hook.dll is still locked by Explorer!
+        start explorer.exe
+        exit /b 1
+    )
+)
+
+echo Building Hook DLL...
+call scripts\build_hook.bat
+if %ERRORLEVEL% NEQ 0 (
+    echo Build FAILED.
+    start explorer.exe
+    exit /b 1
+)
+echo Build succeeded.
+
+echo Starting Explorer...
+start explorer.exe
+echo Waiting for Explorer to initialize...
+timeout /t 8 /nobreak >nul
+
+echo Injecting DLL...
+ContextMenuProfiler.Injector.exe ContextMenuProfiler.Hook.dll
+if %ERRORLEVEL% NEQ 0 (
+    echo Injection FAILED.
+    exit /b 1
+)
+
+echo Redeploy Successful.

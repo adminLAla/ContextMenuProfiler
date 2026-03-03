@@ -1,0 +1,62 @@
+using System.Configuration;
+using System.Data;
+using System.Windows;
+using System.IO;
+using Wpf.Ui.Appearance;
+using ContextMenuProfiler.UI.Core.Services;
+
+namespace ContextMenuProfiler.UI;
+
+/// <summary>
+/// Interaction logic for App.xaml
+/// </summary>
+public partial class App : Application
+{
+    public App()
+    {
+        this.DispatcherUnhandledException += App_DispatcherUnhandledException;
+        AppDomain.CurrentDomain.UnhandledException += CurrentDomain_UnhandledException;
+    }
+
+    protected override void OnStartup(StartupEventArgs e)
+    {
+        base.OnStartup(e);
+        LogService.Instance.Info("Application Started");
+        CleanTempFiles();
+    }
+
+    private void CleanTempFiles()
+    {
+        try
+        {
+            string tempPath = System.IO.Path.GetTempPath();
+            string[] files = Directory.GetFiles(tempPath, "ContextMenuProfiler_probe_*");
+            foreach (var file in files)
+            {
+                try { File.Delete(file); } catch { }
+            }
+            
+            string[] dirs = Directory.GetDirectories(tempPath, "ContextMenuProfiler_probe_*");
+            foreach (var dir in dirs)
+            {
+                try { Directory.Delete(dir, true); } catch { }
+            }
+        }
+        catch (Exception ex)
+        {
+            LogService.Instance.Warning("Failed to clean temp files", ex);
+        }
+    }
+
+    private void App_DispatcherUnhandledException(object sender, System.Windows.Threading.DispatcherUnhandledExceptionEventArgs e)
+    {
+        LogService.Instance.Error("Dispatcher Unhandled Exception", e.Exception);
+        NotificationService.Instance.ShowError("Application Error", e.Exception.Message);
+        e.Handled = true;
+    }
+
+    private void CurrentDomain_UnhandledException(object sender, UnhandledExceptionEventArgs e)
+    {
+        LogService.Instance.Error("Domain Unhandled Exception", e.ExceptionObject as Exception);
+    }
+}

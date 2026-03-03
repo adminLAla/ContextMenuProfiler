@@ -1,0 +1,35 @@
+name: Build
+
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Build C++ Core (Hook & Injector)
+      shell: cmd
+      run: scripts\build_hook.bat
+
+    - name: Setup .NET 8
+      uses: actions/setup-dotnet@v4
+      with:
+        dotnet-version: 8.0.x
+
+    - name: Build WPF UI
+      run: dotnet build ContextMenuProfiler.UI\ContextMenuProfiler.UI.csproj -c Release
+
+    - name: Upload Build Artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: ContextMenuProfiler-Binaries
+        path: |
+          ContextMenuProfiler.Hook.dll
+          ContextMenuProfiler.Injector.exe
+          ContextMenuProfiler.UI/bin/Release/net8.0-windows10.0.19041.0/

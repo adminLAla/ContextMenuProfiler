@@ -1,0 +1,43 @@
+# Logs
+*.log
+crash_log.txt
+
+# Visual Studio Build Artifacts
+[Bb]in/
+[Oo]bj/
+*.exe
+*.dll
+*.pdb
+*.obj
+*.lib
+*.exp
+*.iobj
+*.ipdb
+*.ilk
+
+# VS Code
+.vscode/
+! .vscode/launch.json
+! .vscode/tasks.json
+! .vscode/settings.json
+.trae/
+
+# .NET / C#
+*.user
+*.suo
+*.userosscache
+*.sln.docstates
+
+# Temporary files
+*.tmp
+*.bak
+*.swp
+.vs/
+*_wpftmp.csproj
+*_wpftmp.csproj.user
+
+# Specific files
+omnisharp.json
+reference/
+icons/
+log/
