@@ -189,7 +189,7 @@ namespace ContextMenuProfiler.UI.Core
                     result.Name = hookData.names.Replace("|", ", ");
                     if (result.Status == "Unknown") result.Status = "Verified via Hook";
                 }
-                else if (result.Status == "Unknown")
+                else if (result.Status == "Unknown" || result.Status == "OK")
                 {
                     result.Status = "Hook Loaded (No Menu)";
                     result.DetailedStatus = "The extension was loaded by the Hook service but it did not provide any context menu items for the test context.";
@@ -213,10 +213,13 @@ namespace ContextMenuProfiler.UI.Core
                 result.Status = "Load Error";
                 result.DetailedStatus = $"The Hook service failed to load this extension. Error: {hookData.error ?? "Unknown Error"}";
             }
-            else if (hookData == null && result.Status == "Unknown")
+            else if (hookData == null)
             {
-                result.Status = "Registry Fallback";
-                result.DetailedStatus = "The Hook service could not be reached or failed to process this extension. Data is based on registry scan only.";
+                if (result.Status != "Load Error" && result.Status != "Orphaned / Missing DLL")
+                {
+                    result.Status = "Registry Fallback";
+                    result.DetailedStatus = "The Hook service could not be reached or failed to process this extension. Data is based on registry scan only.";
+                }
             }
         }
 
