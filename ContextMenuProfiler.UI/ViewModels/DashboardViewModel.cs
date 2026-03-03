@@ -245,7 +245,12 @@ namespace ContextMenuProfiler.UI.ViewModels
             IsBusy = true;
             try
             {
-                await HookService.Instance.InjectAsync();
+                bool injectOk = await HookService.Instance.InjectAsync();
+                if (!injectOk)
+                {
+                    NotificationService.Instance.ShowError("Inject Failed", "Injector or Hook DLL not found, or elevation was denied.");
+                    return;
+                }
                 await Task.Delay(1000); // Give it a second
                 await HookService.Instance.GetStatusAsync();
                 if (CurrentHookStatus == HookStatus.Active)

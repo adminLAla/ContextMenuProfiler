@@ -42,15 +42,41 @@
                 <RowDefinition Height="*"/>
             </Grid.RowDefinitions>
 
-            <!-- Hook Warning Banner (Final Refined Layout) -->
-            <Grid Grid.Row="0" Margin="0,0,0,16" Visibility="{Binding CurrentHookStatus, Converter={StaticResource StatusToVisibilityConverter}, ConverterParameter=NotActive}">
-                <ui:InfoBar IsOpen="True" Severity="Warning" 
-                             Title="{Binding HookStatusMessage}" 
-                             Message="The Hook service is required for accurate load time measurement. If it's disconnected, please try to reconnect."
-                             Padding="0,0,180,0"/>
-                <ui:Button HorizontalAlignment="Right" VerticalAlignment="Center" Margin="0,0,44,0" 
-                           Content="Reconnect / Inject" Command="{Binding ReconnectHookCommand}" />
-            </Grid>
+            <!-- Hook Warning Banner -->
+            <Border Grid.Row="0"
+                    Margin="0,0,0,16"
+                    Visibility="{Binding CurrentHookStatus, Converter={StaticResource StatusToVisibilityConverter}, ConverterParameter=NotActive}"
+                    Padding="16,14,16,10"
+                    BorderThickness="1"
+                    CornerRadius="{DynamicResource ControlCornerRadius}"
+                    BorderBrush="{DynamicResource InfoBarBorderBrush}"
+                    Background="{DynamicResource InfoBarWarningSeverityBackgroundBrush}">
+                <Grid>
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="Auto"/>
+                        <ColumnDefinition Width="*"/>
+                        <ColumnDefinition Width="Auto"/>
+                    </Grid.ColumnDefinitions>
+
+                    <ui:SymbolIcon Grid.Column="0"
+                                   Filled="True"
+                                   Symbol="ErrorCircle24"
+                                   Margin="0,2,14,0"
+                                   VerticalAlignment="Top"
+                                   Foreground="{DynamicResource InfoBarWarningSeverityIconBackground}"/>
+
+                    <StackPanel Grid.Column="1" Margin="0,0,12,0">
+                        <TextBlock Text="{Binding HookStatusMessage}" FontWeight="SemiBold" TextWrapping="Wrap"/>
+                        <TextBlock Text="The Hook service is required for accurate load time measurement. If it's disconnected, please try to reconnect."
+                                   TextWrapping="Wrap"/>
+                    </StackPanel>
+
+                    <ui:Button Grid.Column="2"
+                               VerticalAlignment="Top"
+                               Content="Reconnect / Inject"
+                               Command="{Binding ReconnectHookCommand}" />
+                </Grid>
+            </Border>
 
             <Grid Grid.Row="1">
                 <Grid.ColumnDefinitions>

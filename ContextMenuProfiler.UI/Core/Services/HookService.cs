@@ -47,6 +47,13 @@ namespace ContextMenuProfiler.UI.Core.Services
             {
                 try
                 {
+                    // Avoid status flapping while scan workload is actively using the same pipe.
+                    if (IsBusy)
+                    {
+                        await Task.Delay(5000);
+                        continue;
+                    }
+
                     var status = await GetStatusAsync();
                     
                     // Adaptive polling: Poll less frequently if active
@@ -62,6 +69,12 @@ namespace ContextMenuProfiler.UI.Core.Services
 
         public async Task<HookStatus> GetStatusAsync()
         {
+            // During active scans, keep the last-known active state to avoid false "Disconnected".
+            if (IsBusy && CurrentStatus == HookStatus.Active)
+            {
+                return HookStatus.Active;
+            }
+
             // 1. First, try the pipe. If pipe is active, the DLL is definitely there.
             // This is much faster than checking process modules.
             bool isPipeActive = await CheckPipeAsync();
@@ -110,7 +123,7 @@ namespace ContextMenuProfiler.UI.Core.Services
             try
             {
                 using var client = new NamedPipeClientStream(".", PipeName, PipeDirection.InOut, PipeOptions.Asynchronous);
-                await client.ConnectAsync(100); // Very short timeout
+                await client.ConnectAsync(700);
                 return client.IsConnected;
             }
             catch { return false; }

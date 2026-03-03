@@ -23,6 +23,7 @@ public partial class App : Application
         base.OnStartup(e);
         LogService.Instance.Info("Application Started");
         CleanTempFiles();
+        CleanHookOutputFiles();
     }
 
     private void CleanTempFiles()
@@ -46,6 +47,49 @@ public partial class App : Application
         {
             LogService.Instance.Warning("Failed to clean temp files", ex);
         }
+    }
+
+    private void CleanHookOutputFiles()
+    {
+        try
+        {
+            string? hookDllPath = FindFileUpward("ContextMenuProfiler.Hook.dll");
+            if (string.IsNullOrEmpty(hookDllPath)) return;
+
+            string hookDir = Path.GetDirectoryName(hookDllPath)!;
+            string iconDir = Path.Combine(hookDir, "icons");
+            if (Directory.Exists(iconDir))
+            {
+                Directory.Delete(iconDir, true);
+            }
+
+            string hookLog = Path.Combine(hookDir, "hook_internal.log");
+            if (File.Exists(hookLog))
+            {
+                var fi = new FileInfo(hookLog);
+                if (fi.Length > 5 * 1024 * 1024)
+                {
+                    File.Delete(hookLog);
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            LogService.Instance.Warning("Failed to clean hook output files", ex);
+        }
+    }
+
+    private static string? FindFileUpward(string fileName)
+    {
+        string? current = AppDomain.CurrentDomain.BaseDirectory;
+        while (!string.IsNullOrEmpty(current))
+        {
+            string candidate = Path.Combine(current, fileName);
+            if (File.Exists(candidate)) return candidate;
+            current = Path.GetDirectoryName(current);
+        }
+
+        return null;
     }
 
     private void App_DispatcherUnhandledException(object sender, System.Windows.Threading.DispatcherUnhandledExceptionEventArgs e)
