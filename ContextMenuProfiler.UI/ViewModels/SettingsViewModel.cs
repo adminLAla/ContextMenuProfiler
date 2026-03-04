@@ -10,6 +10,8 @@ namespace ContextMenuProfiler.UI.ViewModels
 {
     public partial class SettingsViewModel : ObservableObject
     {
+        private bool _isInitializing;
+
         [ObservableProperty]
         private ObservableCollection<LanguageOption> _languageOptions = new();
 
@@ -18,15 +20,18 @@ namespace ContextMenuProfiler.UI.ViewModels
 
         public SettingsViewModel()
         {
+            _isInitializing = true;
             LanguageOptions = new ObservableCollection<LanguageOption>(LocalizationService.Instance.AvailableLanguages);
             string savedCode = UserPreferencesService.Load().LanguageCode;
             SelectedLanguage = LanguageOptions.FirstOrDefault(l => l.Code.Equals(savedCode, StringComparison.OrdinalIgnoreCase))
                                ?? LanguageOptions.FirstOrDefault(l => l.Code == "auto");
+            _isInitializing = false;
         }
 
         partial void OnSelectedLanguageChanged(LanguageOption? value)
         {
             if (value == null) return;
+            if (_isInitializing) return;
             LocalizationService.Instance.SetLanguage(value.Code);
         }
 

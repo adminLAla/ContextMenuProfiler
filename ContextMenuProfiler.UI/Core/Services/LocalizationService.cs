@@ -70,13 +70,22 @@ namespace ContextMenuProfiler.UI.Core.Services
 
         private void ApplyLanguage(string code, bool persist)
         {
+            code = string.IsNullOrWhiteSpace(code) ? "auto" : code;
             string resolved = ResolveLanguageCode(code);
-            CurrentLanguageCode = resolved;
-            OnPropertyChanged("Item[]");
+            bool languageChanged = !string.Equals(CurrentLanguageCode, resolved, StringComparison.OrdinalIgnoreCase);
+            if (languageChanged)
+            {
+                CurrentLanguageCode = resolved;
+                OnPropertyChanged("Item[]");
+            }
 
             if (persist)
             {
-                UserPreferencesService.Save(new UserPreferences { LanguageCode = code });
+                string savedCode = UserPreferencesService.Load().LanguageCode;
+                if (!string.Equals(savedCode, code, StringComparison.OrdinalIgnoreCase))
+                {
+                    UserPreferencesService.Save(new UserPreferences { LanguageCode = code });
+                }
             }
         }
 

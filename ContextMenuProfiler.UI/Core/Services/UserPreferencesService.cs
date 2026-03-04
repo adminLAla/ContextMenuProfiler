@@ -26,8 +26,9 @@ namespace ContextMenuProfiler.UI.Core.Services
                 var prefs = JsonSerializer.Deserialize<UserPreferences>(json);
                 return prefs ?? new UserPreferences();
             }
-            catch
+            catch (Exception ex)
             {
+                LogService.Instance.Warning("Failed to load user preferences", ex);
                 return new UserPreferences();
             }
         }
@@ -40,8 +41,9 @@ namespace ContextMenuProfiler.UI.Core.Services
                 string json = JsonSerializer.Serialize(preferences, new JsonSerializerOptions { WriteIndented = true });
                 File.WriteAllText(PreferencesPath, json);
             }
-            catch
+            catch (Exception ex)
             {
+                LogService.Instance.Warning("Failed to save user preferences", ex);
             }
         }
     }

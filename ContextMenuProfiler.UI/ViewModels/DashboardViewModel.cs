@@ -216,6 +216,8 @@ namespace ContextMenuProfiler.UI.ViewModels
                 if (e.PropertyName == "Item[]")
                 {
                     ApplyLocalizedCategoryNames();
+                    OnPropertyChanged(nameof(CurrentHookStatus));
+                    OnPropertyChanged(nameof(HookStatusMessage));
                     if (!IsBusy)
                     {
                         StatusText = LocalizationService.Instance["Dashboard.Status.Ready"];
