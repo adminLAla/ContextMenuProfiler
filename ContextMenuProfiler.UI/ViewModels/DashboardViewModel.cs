@@ -319,13 +319,14 @@ namespace ContextMenuProfiler.UI.ViewModels
             
             try
             {
-                var progressAction = new Action<BenchmarkResult>(result =>
+                var progressAction = new Action<BenchmarkResult>(async result =>
                 {
-                    App.Current.Dispatcher.Invoke(() =>
+                    // Use Background priority to ensure UI remains smooth during scan
+                    await App.Current.Dispatcher.InvokeAsync(() => 
                     {
                         InsertSorted(result);
                         UpdateStats();
-                    });
+                    }, System.Windows.Threading.DispatcherPriority.Background);
                 });
 
                 var mode = UseDeepScan ? ScanMode.Full : ScanMode.Targeted;
