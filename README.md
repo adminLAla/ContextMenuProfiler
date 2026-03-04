@@ -11,6 +11,16 @@
 - **全面支持**：不仅支持传统的 COM 扩展，还完美支持现代 UWP/Sparse Package (如 PowerToys, VS Code) 以及静态注册表项。
 - **架构稳健**：采用进程外 IPC 通信和 SEH 异常保护机制，确保在分析过程中 Explorer 的稳定性。
 
+## ⚠️ 安全提示与误报说明
+
+由于本工具的工作原理涉及将 Hook DLL (`ContextMenuProfiler.Hook.dll`) 注入到 `explorer.exe` 进程中以监测性能，这种行为（Process Injection / API Hooking）与某些恶意软件的行为特征相似。
+
+因此，**Windows Defender、火绒、360 等安全软件可能会将其误报为 `Trojan/Injector`**。
+
+- 本项目完全开源，所有代码均在 [GitHub](https://github.com/) 上可见，您可以随时审查。
+- 我们建议在运行前将项目目录添加到杀毒软件的**信任区/排除列表**。
+- 如果您不信任本工具，请勿运行。
+
 ## 🛠️ 快速开始
 
 ### 环境要求
