@@ -219,15 +219,31 @@ namespace ContextMenuProfiler.UI.Core
             }
             else if (hookData != null && !hookData.success)
             {
-                result.Status = "Load Error";
-                result.DetailedStatus = $"The Hook service failed to load this extension. Error: {hookData.error ?? "Unknown Error"}";
+                if (!string.IsNullOrEmpty(hookData.error) && hookData.error.Contains("Timeout", StringComparison.OrdinalIgnoreCase))
+                {
+                    result.Status = "IPC Timeout";
+                    result.DetailedStatus = $"Hook service timed out while probing this extension. Error: {hookData.error}";
+                }
+                else
+                {
+                    result.Status = "Load Error";
+                    result.DetailedStatus = $"The Hook service failed to load this extension. Error: {hookData.error ?? "Unknown Error"}";
+                }
             }
             else if (hookData == null)
             {
                 if (result.Status != "Load Error" && result.Status != "Orphaned / Missing DLL")
                 {
-                    result.Status = "Registry Fallback";
-                    result.DetailedStatus = "The Hook service could not be reached or failed to process this extension. Data is based on registry scan only.";
+                    if (hookCall.roundtrip_ms >= 1900)
+                    {
+                        result.Status = "IPC Timeout";
+                        result.DetailedStatus = "Hook service response timed out for this extension. Data is based on registry scan only.";
+                    }
+                    else
+                    {
+                        result.Status = "Registry Fallback";
+                        result.DetailedStatus = "The Hook service could not be reached or failed to process this extension. Data is based on registry scan only.";
+                    }
                 }
             }
         }

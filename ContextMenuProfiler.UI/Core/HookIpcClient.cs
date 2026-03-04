@@ -37,7 +37,9 @@ namespace ContextMenuProfiler.UI.Core
     public static class HookIpcClient
     {
         private const string PipeName = "ContextMenuProfilerHook";
-        private static readonly SemaphoreSlim _lock = new SemaphoreSlim(1, 1);
+        private const int ConnectTimeoutMs = 1200;
+        private const int RoundTripTimeoutMs = 2000;
+        private static readonly SemaphoreSlim _lock = new SemaphoreSlim(3, 3);
 
         public static async Task<HookCallResult> GetHookDataAsync(string clsid, string? contextPath = null, string? dllHint = null)
         {
@@ -60,28 +62,39 @@ namespace ContextMenuProfiler.UI.Core
                 using (var client = new NamedPipeClientStream(".", PipeName, PipeDirection.InOut, PipeOptions.Asynchronous))
                 {
                     var swConnect = Stopwatch.StartNew();
-                    try 
+                    bool connected = false;
+                    for (int attempt = 0; attempt < 2 && !connected; attempt++)
                     {
-                        await client.ConnectAsync(500);
+                        try
+                        {
+                            await client.ConnectAsync(ConnectTimeoutMs);
+                            connected = true;
+                        }
+                        catch when (attempt == 0)
+                        {
+                            await Task.Delay(80);
+                        }
                     }
-                    catch (Exception ex)
+                    if (!connected)
                     {
                         swConnect.Stop();
                         result.connect_ms = Math.Max(0, (long)swConnect.Elapsed.TotalMilliseconds);
-                        Debug.WriteLine($"[IPC DIAG] Connection Failed: {ex.Message}");
+                        Debug.WriteLine("[IPC DIAG] Connection Failed after retry.");
                         return result;
                     }
                     swConnect.Stop();
                     result.connect_ms = Math.Max(0, (long)swConnect.Elapsed.TotalMilliseconds);
 
                     var swRoundTrip = Stopwatch.StartNew();
+                    using var roundTripCts = new CancellationTokenSource(RoundTripTimeoutMs);
                     // Format: "CLSID|Path[|DllHint]"
                     string requestStr = string.IsNullOrEmpty(dllHint) ? $"{clsid}|{path}" : $"{clsid}|{path}|{dllHint}";
                     byte[] request = Encoding.UTF8.GetBytes(requestStr);
-                    await client.WriteAsync(request, 0, request.Length);
+                    await client.WriteAsync(request, 0, request.Length, roundTripCts.Token);
+                    await client.FlushAsync(roundTripCts.Token);
 
                     byte[] responseBuf = new byte[65536];
-                    int read = await client.ReadAsync(responseBuf, 0, responseBuf.Length);
+                    int read = await client.ReadAsync(responseBuf, 0, responseBuf.Length, roundTripCts.Token);
                     
                     if (read <= 0)
                     {
@@ -115,6 +128,11 @@ namespace ContextMenuProfiler.UI.Core
                         return result;
                     }
                 }
+            }
+            catch (OperationCanceledException)
+            {
+                Debug.WriteLine("[IPC DIAG] Roundtrip timeout.");
+                return result;
             }
             catch (Exception ex)
             {
