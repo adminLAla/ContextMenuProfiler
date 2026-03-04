@@ -8,6 +8,7 @@ using System;
 using System.Windows.Controls;
 using System.Threading.Tasks;
 using System.Windows.Threading;
+using System.Reflection;
 
 namespace ContextMenuProfiler.UI.ViewModels
 {
@@ -25,10 +26,15 @@ namespace ContextMenuProfiler.UI.ViewModels
         [ObservableProperty]
         private string _hookButtonText = LocalizationService.Instance["Hook.Inject"];
 
+        [ObservableProperty]
+        private string _statusBarVersionText = "";
+
         private readonly DispatcherTimer _statusTimer;
+        private readonly string _appVersion;
 
         public MainWindowViewModel()
         {
+            _appVersion = ResolveAppVersion();
             LocalizationService.Instance.PropertyChanged += (_, e) =>
             {
                 if (e.PropertyName == "Item[]")
@@ -70,6 +76,7 @@ namespace ContextMenuProfiler.UI.ViewModels
         private void ApplyLocalization()
         {
             ApplicationTitle = LocalizationService.Instance["App.Title"];
+            StatusBarVersionText = string.Format(LocalizationService.Instance["Status.VersionFormat"], _appVersion);
             MenuItems = new ObservableCollection<object>
             {
                 new NavigationViewItem
@@ -90,6 +97,22 @@ namespace ContextMenuProfiler.UI.ViewModels
             {
                 new System.Windows.Controls.MenuItem { Header = LocalizationService.Instance["Tray.Home"], Tag = "home" }
             };
+        }
+
+        private static string ResolveAppVersion()
+        {
+            var version = Assembly.GetExecutingAssembly().GetName().Version;
+            if (version == null)
+            {
+                return "dev";
+            }
+
+            if (version.Build > 0)
+            {
+                return $"{version.Major}.{version.Minor}.{version.Build}";
+            }
+
+            return $"{version.Major}.{version.Minor}";
         }
 
         [RelayCommand]
