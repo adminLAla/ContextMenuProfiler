@@ -23,6 +23,7 @@
         <converters:IconToImageConverter x:Key="IconToImageConverter"/>
         <converters:StringNullOrEmptyToVisibilityConverter x:Key="StringNullOrEmptyToVisibilityConverter"/>
         <converters:LoadTimeToBrushConverter x:Key="LoadTimeToBrushConverter"/>
+        <converters:LoadTimeToTextConverter x:Key="LoadTimeToTextConverter"/>
         <BooleanToVisibilityConverter x:Key="BooleanToVisibilityConverter"/>
     </Page.Resources>
 
@@ -399,13 +400,44 @@
                                                         
                                                         <Separator Grid.Row="3" Grid.ColumnSpan="2" Margin="0,4"/>
                                                         <TextBlock Grid.Row="4" Grid.Column="0" Text="Total:" FontWeight="SemiBold"/>
-                                                        <TextBlock Grid.Row="4" Grid.Column="1" Text="{Binding TotalTime, StringFormat='{}{0:F2} ms'}" FontWeight="SemiBold" HorizontalAlignment="Right"/>
+                                                        <TextBlock Grid.Row="4" Grid.Column="1" FontWeight="SemiBold" HorizontalAlignment="Right">
+                                                            <TextBlock.Text>
+                                                                <MultiBinding Converter="{StaticResource LoadTimeToTextConverter}">
+                                                                    <Binding Path="TotalTime"/>
+                                                                    <Binding Path="Status"/>
+                                                                </MultiBinding>
+                                                            </TextBlock.Text>
+                                                        </TextBlock>
                                                     </Grid>
                                                 </StackPanel>
                                             </ToolTip>
                                         </Border.ToolTip>
-                                        <TextBlock Text="{Binding TotalTime, StringFormat='{}{0} ms'}" FontSize="11" FontWeight="SemiBold" 
-                                                   Foreground="{Binding TotalTime, Converter={StaticResource LoadTimeToBrushConverter}}"/>
+                                        <TextBlock FontSize="11" FontWeight="SemiBold" Foreground="{Binding TotalTime, Converter={StaticResource LoadTimeToBrushConverter}}">
+                                            <TextBlock.Style>
+                                                <Style TargetType="TextBlock">
+                                                    <Style.Triggers>
+                                                        <DataTrigger Binding="{Binding Status}" Value="Registry Fallback">
+                                                            <Setter Property="Foreground" Value="#FFC107"/>
+                                                        </DataTrigger>
+                                                        <DataTrigger Binding="{Binding Status}" Value="Hook Loaded (No Menu)">
+                                                            <Setter Property="Foreground" Value="#FFC107"/>
+                                                        </DataTrigger>
+                                                        <DataTrigger Binding="{Binding Status}" Value="Load Error">
+                                                            <Setter Property="Foreground" Value="{DynamicResource SystemFillColorCriticalBrush}"/>
+                                                        </DataTrigger>
+                                                        <DataTrigger Binding="{Binding Status}" Value="Orphaned / Missing DLL">
+                                                            <Setter Property="Foreground" Value="{DynamicResource SystemFillColorCriticalBrush}"/>
+                                                        </DataTrigger>
+                                                    </Style.Triggers>
+                                                </Style>
+                                            </TextBlock.Style>
+                                            <TextBlock.Text>
+                                                <MultiBinding Converter="{StaticResource LoadTimeToTextConverter}">
+                                                    <Binding Path="TotalTime"/>
+                                                    <Binding Path="Status"/>
+                                                </MultiBinding>
+                                            </TextBlock.Text>
+                                        </TextBlock>
                                     </Border>
 
                                     <!-- Toggle -->
