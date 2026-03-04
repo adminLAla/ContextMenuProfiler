@@ -25,13 +25,25 @@ namespace ContextMenuProfiler.UI.Core
         public int state { get; set; }
     }
 
+    public class HookCallResult
+    {
+        public HookResponse? data { get; set; }
+        public long lock_wait_ms { get; set; }
+        public long connect_ms { get; set; }
+        public long roundtrip_ms { get; set; }
+        public long total_ms { get; set; }
+    }
+
     public static class HookIpcClient
     {
         private const string PipeName = "ContextMenuProfilerHook";
         private static readonly SemaphoreSlim _lock = new SemaphoreSlim(1, 1);
 
-        public static async Task<HookResponse?> GetHookDataAsync(string clsid, string? contextPath = null, string? dllHint = null)
+        public static async Task<HookCallResult> GetHookDataAsync(string clsid, string? contextPath = null, string? dllHint = null)
         {
+            var result = new HookCallResult();
+            var swTotal = Stopwatch.StartNew();
+
             // Default bait path if none provided
             string path = contextPath ?? Path.Combine(Path.GetTempPath(), "ContextMenuProfiler_probe.txt");
             if (!File.Exists(path) && !Directory.Exists(path))
@@ -39,21 +51,30 @@ namespace ContextMenuProfiler.UI.Core
                 try { File.WriteAllText(path, "probe"); } catch {}
             }
 
+            var swLock = Stopwatch.StartNew();
             await _lock.WaitAsync();
+            swLock.Stop();
+            result.lock_wait_ms = Math.Max(0, (long)swLock.Elapsed.TotalMilliseconds);
             try
             {
                 using (var client = new NamedPipeClientStream(".", PipeName, PipeDirection.InOut, PipeOptions.Asynchronous))
                 {
+                    var swConnect = Stopwatch.StartNew();
                     try 
                     {
                         await client.ConnectAsync(500);
                     }
                     catch (Exception ex)
                     {
+                        swConnect.Stop();
+                        result.connect_ms = Math.Max(0, (long)swConnect.Elapsed.TotalMilliseconds);
                         Debug.WriteLine($"[IPC DIAG] Connection Failed: {ex.Message}");
-                        return null;
+                        return result;
                     }
+                    swConnect.Stop();
+                    result.connect_ms = Math.Max(0, (long)swConnect.Elapsed.TotalMilliseconds);
 
+                    var swRoundTrip = Stopwatch.StartNew();
                     // Format: "CLSID|Path[|DllHint]"
                     string requestStr = string.IsNullOrEmpty(dllHint) ? $"{clsid}|{path}" : $"{clsid}|{path}|{dllHint}";
                     byte[] request = Encoding.UTF8.GetBytes(requestStr);
@@ -62,7 +83,12 @@ namespace ContextMenuProfiler.UI.Core
                     byte[] responseBuf = new byte[65536];
                     int read = await client.ReadAsync(responseBuf, 0, responseBuf.Length);
                     
-                    if (read <= 0) return null;
+                    if (read <= 0)
+                    {
+                        swRoundTrip.Stop();
+                        result.roundtrip_ms = Math.Max(0, (long)swRoundTrip.Elapsed.TotalMilliseconds);
+                        return result;
+                    }
 
                     string response = Encoding.UTF8.GetString(responseBuf, 0, read).TrimEnd('\0');
                     try
@@ -73,23 +99,32 @@ namespace ContextMenuProfiler.UI.Core
                         if (start != -1 && end != -1 && end > start)
                         {
                             string json = response.Substring(start, end - start + 1);
-                            return JsonSerializer.Deserialize<HookResponse>(json);
+                            result.data = JsonSerializer.Deserialize<HookResponse>(json);
+                            swRoundTrip.Stop();
+                            result.roundtrip_ms = Math.Max(0, (long)swRoundTrip.Elapsed.TotalMilliseconds);
+                            return result;
                         }
-                        return null;
+                        swRoundTrip.Stop();
+                        result.roundtrip_ms = Math.Max(0, (long)swRoundTrip.Elapsed.TotalMilliseconds);
+                        return result;
                     }
                     catch (JsonException)
                     {
-                        return null;
+                        swRoundTrip.Stop();
+                        result.roundtrip_ms = Math.Max(0, (long)swRoundTrip.Elapsed.TotalMilliseconds);
+                        return result;
                     }
                 }
             }
             catch (Exception ex)
             {
                 Debug.WriteLine($"[IPC DIAG] Critical Error: {ex.Message}");
-                return null;
+                return result;
             }
             finally
             {
+                swTotal.Stop();
+                result.total_ms = Math.Max(0, (long)swTotal.Elapsed.TotalMilliseconds);
                 _lock.Release();
             }
         }
@@ -97,7 +132,8 @@ namespace ContextMenuProfiler.UI.Core
         [Obsolete("Use GetHookDataAsync instead")]
         public static async Task<string[]> GetMenuNamesAsync(string clsid, string? contextPath = null)
         {
-            var data = await GetHookDataAsync(clsid, contextPath);
+            var call = await GetHookDataAsync(clsid, contextPath);
+            var data = call.data;
             if (data == null || !data.success || string.IsNullOrEmpty(data.names)) return Array.Empty<string>();
             return data.names.Split('|', StringSplitOptions.RemoveEmptyEntries);
         }

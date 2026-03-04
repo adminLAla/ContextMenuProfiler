@@ -183,6 +183,7 @@ namespace ContextMenuProfiler.UI.ViewModels
 
         private string _lastScanMode = "None"; // "System" or "File"
         private string _lastScanPath = "";
+        private long _scanOrderCounter = 0;
 
         public HookStatus CurrentHookStatus => HookService.Instance.CurrentStatus;
 
@@ -311,6 +312,7 @@ namespace ContextMenuProfiler.UI.ViewModels
             
             App.Current.Dispatcher.Invoke(() =>
             {
+                _scanOrderCounter = 0;
                 Results.Clear();
                 DisplayResults.Clear();
             });
@@ -347,6 +349,11 @@ namespace ContextMenuProfiler.UI.ViewModels
 
         private void InsertSorted(BenchmarkResult newItem)
         {
+            if (newItem.ScanOrder <= 0)
+            {
+                newItem.ScanOrder = Interlocked.Increment(ref _scanOrderCounter);
+            }
+
             // Use BinarySearch-based extension for maximum efficiency
             Results.InsertSorted(newItem, CurrentComparer);
 
@@ -362,6 +369,7 @@ namespace ContextMenuProfiler.UI.ViewModels
             0 => (a, b) => b.TotalTime.CompareTo(a.TotalTime), // Time Desc
             1 => (a, b) => a.TotalTime.CompareTo(b.TotalTime), // Time Asc
             2 => (a, b) => string.Compare(a.Name, b.Name, StringComparison.OrdinalIgnoreCase), // Name
+            3 => (a, b) => b.ScanOrder.CompareTo(a.ScanOrder), // Latest Scanned First
             _ => (a, b) => b.TotalTime.CompareTo(a.TotalTime)
         };
 
@@ -387,6 +395,7 @@ namespace ContextMenuProfiler.UI.ViewModels
             _lastScanPath = filePath;
             StatusText = $"Scanning: {filePath}";
             IsBusy = true;
+            _scanOrderCounter = 0;
             Results.Clear();
             DisplayResults.Clear(); // Clear display
             RealLoadTime = "Measuring...";

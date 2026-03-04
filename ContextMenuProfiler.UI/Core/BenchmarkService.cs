@@ -1,7 +1,6 @@
 using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
-using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Runtime.InteropServices;
@@ -30,6 +29,11 @@ namespace ContextMenuProfiler.UI.Core
         public long InitTime { get; set; }
         public long CreateTime { get; set; }
         public long QueryTime { get; set; }
+        public long WallClockTime { get; set; }
+        public long LockWaitTime { get; set; }
+        public long ConnectTime { get; set; }
+        public long IpcRoundTripTime { get; set; }
+        public long ScanOrder { get; set; }
         
         // Extended Info
         public string? PackageName { get; set; }
@@ -179,7 +183,12 @@ namespace ContextMenuProfiler.UI.Core
                 result.DetailedStatus = $"The file '{result.BinaryPath}' was not found on disk. This extension is likely corrupted or uninstalled.";
             }
 
-            var hookData = await HookIpcClient.GetHookDataAsync(result.Clsid.Value.ToString("B"), contextPath, result.BinaryPath);
+            var hookCall = await HookIpcClient.GetHookDataAsync(result.Clsid.Value.ToString("B"), contextPath, result.BinaryPath);
+            var hookData = hookCall.data;
+            result.WallClockTime = hookCall.total_ms;
+            result.LockWaitTime = hookCall.lock_wait_ms;
+            result.ConnectTime = hookCall.connect_ms;
+            result.IpcRoundTripTime = hookCall.roundtrip_ms;
 
             if (hookData != null && hookData.success)
             {
