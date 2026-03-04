@@ -37,6 +37,8 @@ namespace ContextMenuProfiler.UI.ViewModels
 
         private async Task UpdateHookStatus()
         {
+            if (HookService.Instance.IsBusy) return;
+
             CurrentHookStatus = await HookService.Instance.GetStatusAsync();
             switch (CurrentHookStatus)
             {

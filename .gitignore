@@ -33,6 +33,7 @@ crash_log.txt
 *.bak
 *.swp
 .vs/
+.build/
 *_wpftmp.csproj
 *_wpftmp.csproj.user
 

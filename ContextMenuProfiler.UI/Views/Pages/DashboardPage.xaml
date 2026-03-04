@@ -23,6 +23,7 @@
         <converters:IconToImageConverter x:Key="IconToImageConverter"/>
         <converters:StringNullOrEmptyToVisibilityConverter x:Key="StringNullOrEmptyToVisibilityConverter"/>
         <converters:LoadTimeToBrushConverter x:Key="LoadTimeToBrushConverter"/>
+        <converters:LoadTimeToTextConverter x:Key="LoadTimeToTextConverter"/>
         <BooleanToVisibilityConverter x:Key="BooleanToVisibilityConverter"/>
     </Page.Resources>
 
@@ -42,15 +43,41 @@
                 <RowDefinition Height="*"/>
             </Grid.RowDefinitions>
 
-            <!-- Hook Warning Banner (Final Refined Layout) -->
-            <Grid Grid.Row="0" Margin="0,0,0,16" Visibility="{Binding CurrentHookStatus, Converter={StaticResource StatusToVisibilityConverter}, ConverterParameter=NotActive}">
-                <ui:InfoBar IsOpen="True" Severity="Warning" 
-                             Title="{Binding HookStatusMessage}" 
-                             Message="The Hook service is required for accurate load time measurement. If it's disconnected, please try to reconnect."
-                             Padding="0,0,180,0"/>
-                <ui:Button HorizontalAlignment="Right" VerticalAlignment="Center" Margin="0,0,44,0" 
-                           Content="Reconnect / Inject" Command="{Binding ReconnectHookCommand}" />
-            </Grid>
+            <!-- Hook Warning Banner -->
+            <Border Grid.Row="0"
+                    Margin="0,0,0,16"
+                    Visibility="{Binding CurrentHookStatus, Converter={StaticResource StatusToVisibilityConverter}, ConverterParameter=NotActive}"
+                    Padding="16,14,16,10"
+                    BorderThickness="1"
+                    CornerRadius="{DynamicResource ControlCornerRadius}"
+                    BorderBrush="{DynamicResource InfoBarBorderBrush}"
+                    Background="{DynamicResource InfoBarWarningSeverityBackgroundBrush}">
+                <Grid>
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="Auto"/>
+                        <ColumnDefinition Width="*"/>
+                        <ColumnDefinition Width="Auto"/>
+                    </Grid.ColumnDefinitions>
+
+                    <ui:SymbolIcon Grid.Column="0"
+                                   Filled="True"
+                                   Symbol="ErrorCircle24"
+                                   Margin="0,2,14,0"
+                                   VerticalAlignment="Top"
+                                   Foreground="{DynamicResource InfoBarWarningSeverityIconBackground}"/>
+
+                    <StackPanel Grid.Column="1" Margin="0,0,12,0">
+                        <TextBlock Text="{Binding HookStatusMessage}" FontWeight="SemiBold" TextWrapping="Wrap"/>
+                        <TextBlock Text="The Hook service is required for accurate load time measurement. If it's disconnected, please try to reconnect."
+                                   TextWrapping="Wrap"/>
+                    </StackPanel>
+
+                    <ui:Button Grid.Column="2"
+                               VerticalAlignment="Top"
+                               Content="Reconnect / Inject"
+                               Command="{Binding ReconnectHookCommand}" />
+                </Grid>
+            </Border>
 
             <Grid Grid.Row="1">
                 <Grid.ColumnDefinitions>
@@ -399,13 +426,44 @@
                                                         
                                                         <Separator Grid.Row="3" Grid.ColumnSpan="2" Margin="0,4"/>
                                                         <TextBlock Grid.Row="4" Grid.Column="0" Text="Total:" FontWeight="SemiBold"/>
-                                                        <TextBlock Grid.Row="4" Grid.Column="1" Text="{Binding TotalTime, StringFormat='{}{0:F2} ms'}" FontWeight="SemiBold" HorizontalAlignment="Right"/>
+                                                        <TextBlock Grid.Row="4" Grid.Column="1" FontWeight="SemiBold" HorizontalAlignment="Right">
+                                                            <TextBlock.Text>
+                                                                <MultiBinding Converter="{StaticResource LoadTimeToTextConverter}">
+                                                                    <Binding Path="TotalTime"/>
+                                                                    <Binding Path="Status"/>
+                                                                </MultiBinding>
+                                                            </TextBlock.Text>
+                                                        </TextBlock>
                                                     </Grid>
                                                 </StackPanel>
                                             </ToolTip>
                                         </Border.ToolTip>
-                                        <TextBlock Text="{Binding TotalTime, StringFormat='{}{0} ms'}" FontSize="11" FontWeight="SemiBold" 
-                                                   Foreground="{Binding TotalTime, Converter={StaticResource LoadTimeToBrushConverter}}"/>
+                                        <TextBlock FontSize="11" FontWeight="SemiBold" Foreground="{Binding TotalTime, Converter={StaticResource LoadTimeToBrushConverter}}">
+                                            <TextBlock.Style>
+                                                <Style TargetType="TextBlock">
+                                                    <Style.Triggers>
+                                                        <DataTrigger Binding="{Binding Status}" Value="Registry Fallback">
+                                                            <Setter Property="Foreground" Value="#FFC107"/>
+                                                        </DataTrigger>
+                                                        <DataTrigger Binding="{Binding Status}" Value="Hook Loaded (No Menu)">
+                                                            <Setter Property="Foreground" Value="#FFC107"/>
+                                                        </DataTrigger>
+                                                        <DataTrigger Binding="{Binding Status}" Value="Load Error">
+                                                            <Setter Property="Foreground" Value="{DynamicResource SystemFillColorCriticalBrush}"/>
+                                                        </DataTrigger>
+                                                        <DataTrigger Binding="{Binding Status}" Value="Orphaned / Missing DLL">
+                                                            <Setter Property="Foreground" Value="{DynamicResource SystemFillColorCriticalBrush}"/>
+                                                        </DataTrigger>
+                                                    </Style.Triggers>
+                                                </Style>
+                                            </TextBlock.Style>
+                                            <TextBlock.Text>
+                                                <MultiBinding Converter="{StaticResource LoadTimeToTextConverter}">
+                                                    <Binding Path="TotalTime"/>
+                                                    <Binding Path="Status"/>
+                                                </MultiBinding>
+                                            </TextBlock.Text>
+                                        </TextBlock>
                                     </Border>
 
                                     <!-- Toggle -->

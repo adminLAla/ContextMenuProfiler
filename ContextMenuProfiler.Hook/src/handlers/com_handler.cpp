@@ -123,7 +123,13 @@ void QueryComExtensionInternal(const CLSID& clsid, const wchar_t* filePath, char
     
     // --- 智取图标：先看注册表有没有正宅 ---
     std::wstring regIcon = GetIconFromRegistry(clsid);
-    bool needCapture = regIcon.empty();
+    bool captureIcons = false;
+    wchar_t capFlag[16] = {};
+    DWORD capLen = GetEnvironmentVariableW(L"CMP_HOOK_CAPTURE_ICONS", capFlag, ARRAYSIZE(capFlag));
+    if (capLen > 0 && capLen < ARRAYSIZE(capFlag)) {
+        captureIcons = (capFlag[0] == L'1' || capFlag[0] == L'Y' || capFlag[0] == L'y' || capFlag[0] == L'T' || capFlag[0] == L't');
+    }
+    bool needCapture = captureIcons && regIcon.empty();
 
     if (SUCCEEDED(pUnk->QueryInterface(IID_IContextMenu_, (void**)&pMenu))) {
         HMENU hMenu = CreatePopupMenu();
@@ -166,8 +172,8 @@ void QueryComExtensionInternal(const CLSID& clsid, const wchar_t* filePath, char
                         if (saved) icons += iconPath;
                         else icons += L"NONE";
                     } else {
-                        // 已经有注册表图标了，这里直接标记
-                        icons += L"USE_REGISTRY";
+                        // 不落盘时，如果有注册表图标则走注册表，否则明确无图标
+                        icons += regIcon.empty() ? L"NONE" : L"USE_REGISTRY";
                     }
                 }
             }
