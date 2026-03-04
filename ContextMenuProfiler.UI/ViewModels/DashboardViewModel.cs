@@ -125,26 +125,19 @@ namespace ContextMenuProfiler.UI.ViewModels
 
         private bool MatchesFilter(BenchmarkResult result)
         {
+            if (ShowMeasuredOnly && result.TotalTime <= 0)
+            {
+                return false;
+            }
+
             // Category Match
             bool categoryMatch = SelectedCategory == "All" || result.Category == SelectedCategory;
             if (!categoryMatch) return false;
-
-            // Optional invalid-result filter (N/A, fallback, static)
-            if (HideInvalidResults && IsInvalidTimingResult(result)) return false;
 
             // Search Match
             if (string.IsNullOrWhiteSpace(SearchText)) return true;
             return result.Name.Contains(SearchText, StringComparison.OrdinalIgnoreCase) ||
                    (result.Path != null && result.Path.Contains(SearchText, StringComparison.OrdinalIgnoreCase));
-        }
-
-        private static bool IsInvalidTimingResult(BenchmarkResult result)
-        {
-            if (result.Type == "Static") return true;
-            if (string.Equals(result.Status, "Registry Fallback", StringComparison.OrdinalIgnoreCase)) return true;
-            if (string.Equals(result.Status, "Load Error", StringComparison.OrdinalIgnoreCase)) return true;
-            if (string.Equals(result.Status, "Orphaned / Missing DLL", StringComparison.OrdinalIgnoreCase)) return true;
-            return false;
         }
 
         [ObservableProperty]
@@ -156,15 +149,7 @@ namespace ContextMenuProfiler.UI.ViewModels
         }
 
         [ObservableProperty]
-        private bool _hideInvalidResults = false;
-
-        partial void OnHideInvalidResultsChanged(bool value)
-        {
-            _ = ApplyFilterAsync();
-        }
-
-        [ObservableProperty]
-        private string _statusText = "Ready to scan";
+        private string _statusText = LocalizationService.Instance["Dashboard.Status.Ready"];
 
         [ObservableProperty]
         [NotifyCanExecuteChangedFor(nameof(RefreshCommand))]
@@ -199,10 +184,19 @@ namespace ContextMenuProfiler.UI.ViewModels
         private bool _useDeepScan = false;
 
         [ObservableProperty]
+        private bool _showMeasuredOnly = false;
+
+        partial void OnShowMeasuredOnlyChanged(bool value)
+        {
+            _ = ApplyFilterAsync();
+        }
+
+        [ObservableProperty]
         private string _realLoadTime = "N/A"; // Display string for Real Shell Benchmark
 
         private string _lastScanMode = "None"; // "System" or "File"
         private string _lastScanPath = "";
+        private long _scanOrderCounter = 0;
 
         public HookStatus CurrentHookStatus => HookService.Instance.CurrentStatus;
 
@@ -212,10 +206,10 @@ namespace ContextMenuProfiler.UI.ViewModels
             {
                 return CurrentHookStatus switch
                 {
-                    HookStatus.Active => "Hook Service Active",
-                    HookStatus.Injected => "DLL Injected, Waiting for Pipe...",
-                    HookStatus.Disconnected => "Hook Disconnected (Injection Required)",
-                    _ => "Unknown Status"
+                    HookStatus.Active => LocalizationService.Instance["Hook.Active"],
+                    HookStatus.Injected => LocalizationService.Instance["Hook.InjectedIdle"],
+                    HookStatus.Disconnected => LocalizationService.Instance["Hook.NotInjected"],
+                    _ => LocalizationService.Instance["Dashboard.Status.Unknown"]
                 };
             }
         }
@@ -229,15 +223,19 @@ namespace ContextMenuProfiler.UI.ViewModels
             // Removed sync ScanResultsView setup
 
             // Initialize categories
-            Categories = new ObservableCollection<CategoryItem>
+            ApplyLocalizedCategoryNames();
+            LocalizationService.Instance.PropertyChanged += (_, e) =>
             {
-                new CategoryItem { Name = "All", Tag = "All", Icon = SymbolRegular.TableMultiple20, IsActive = true },
-                new CategoryItem { Name = "Files", Tag = "File", Icon = SymbolRegular.Document20 },
-                new CategoryItem { Name = "Folders", Tag = "Folder", Icon = SymbolRegular.Folder20 },
-                new CategoryItem { Name = "Background", Tag = "Background", Icon = SymbolRegular.Image20 },
-                new CategoryItem { Name = "Drives", Tag = "Drive", Icon = SymbolRegular.HardDrive20 },
-                new CategoryItem { Name = "UWP/Modern", Tag = "UWP", Icon = SymbolRegular.Box20 },
-                new CategoryItem { Name = "Static Verbs", Tag = "Static", Icon = SymbolRegular.PuzzlePiece20 }
+                if (e.PropertyName == "Item[]")
+                {
+                    ApplyLocalizedCategoryNames();
+                    OnPropertyChanged(nameof(CurrentHookStatus));
+                    OnPropertyChanged(nameof(HookStatusMessage));
+                    if (!IsBusy)
+                    {
+                        StatusText = LocalizationService.Instance["Dashboard.Status.Ready"];
+                    }
+                }
             };
 
             // Observe Hook status changes to update command availability
@@ -326,73 +324,79 @@ namespace ContextMenuProfiler.UI.ViewModels
         private async Task ScanSystem()
         {
             _lastScanMode = "System";
-            StatusText = "Scanning system...";
+            StatusText = LocalizationService.Instance["Dashboard.Status.ScanningSystem"];
             IsBusy = true;
-            bool startedWithHook = HookService.Instance.CurrentStatus != HookStatus.Disconnected;
             
             App.Current.Dispatcher.Invoke(() =>
             {
+                _scanOrderCounter = 0;
                 Results.Clear();
                 DisplayResults.Clear();
-                ResetStats();
             });
             
             try
             {
+                int pendingUiUpdates = 0;
+                bool producerCompleted = false;
+                var uiDrainTcs = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+
+                void TryCompleteUiDrain()
+                {
+                    if (producerCompleted && Volatile.Read(ref pendingUiUpdates) == 0)
+                    {
+                        uiDrainTcs.TrySetResult(true);
+                    }
+                }
+
                 var progressAction = new Action<BenchmarkResult>(result =>
                 {
-                    InsertSorted(result);
-                    AccumulateStats(result);
+                    // Use Background priority to ensure UI remains smooth during scan
+                    Interlocked.Increment(ref pendingUiUpdates);
+                    var dispatcherTask = App.Current.Dispatcher.InvokeAsync(() => 
+                    {
+                        InsertSorted(result);
+                        UpdateStats();
+                    }, System.Windows.Threading.DispatcherPriority.Background).Task;
+
+                    _ = dispatcherTask.ContinueWith(t =>
+                    {
+                        Interlocked.Decrement(ref pendingUiUpdates);
+                        if (t.IsFaulted && t.Exception != null)
+                        {
+                            LogService.Instance.Error("Progress UI update failed", t.Exception);
+                        }
+                        TryCompleteUiDrain();
+                    }, TaskScheduler.Default);
                 });
 
                 var mode = UseDeepScan ? ScanMode.Full : ScanMode.Targeted;
-                await _benchmarkService.RunSystemBenchmarkAsync(mode, new Progress<BenchmarkResult>(progressAction));
+                await Task.Run(async () => await _benchmarkService.RunSystemBenchmarkAsync(mode, new Progress<BenchmarkResult>(progressAction)));
+                producerCompleted = true;
+                TryCompleteUiDrain();
+                await uiDrainTcs.Task;
 
-                StatusText = $"Scan complete. Found {Results.Count} extensions.";
-                NotificationService.Instance.ShowSuccess("Scan Complete", $"Found {Results.Count} extensions.");
+                StatusText = string.Format(LocalizationService.Instance["Dashboard.Status.ScanComplete"], Results.Count);
+                NotificationService.Instance.ShowSuccess(LocalizationService.Instance["Dashboard.Notify.ScanComplete.Title"], string.Format(LocalizationService.Instance["Dashboard.Notify.ScanComplete.Message"], Results.Count));
             }
             catch (Exception ex)
             {
                 LogService.Instance.Error("Scan System Failed", ex);
-                StatusText = "Scan failed.";
-                NotificationService.Instance.ShowError("Scan Failed", ex.Message);
+                StatusText = LocalizationService.Instance["Dashboard.Status.ScanFailed"];
+                NotificationService.Instance.ShowError(LocalizationService.Instance["Dashboard.Notify.ScanFailed.Title"], ex.Message);
             }
             finally
             {
                 IsBusy = false;
-
-                // If hook was available at scan start but got lost during scan,
-                // try one quick recovery so subsequent scans don't immediately fall back.
-                if (startedWithHook)
-                {
-                    try
-                    {
-                        var endStatus = await HookService.Instance.GetStatusAsync();
-                        if (endStatus == HookStatus.Disconnected)
-                        {
-                            bool recovered = await HookService.Instance.InjectAsync();
-                            if (recovered)
-                            {
-                                await Task.Delay(300);
-                                endStatus = await HookService.Instance.GetStatusAsync();
-                            }
-
-                            if (endStatus != HookStatus.Active)
-                            {
-                                NotificationService.Instance.ShowWarning("Hook Disconnected", "Hook service disconnected during scan. Results may contain fallback data.");
-                            }
-                        }
-                    }
-                    catch
-                    {
-                        // No-op: scan result is already available.
-                    }
-                }
             }
         }
 
         private void InsertSorted(BenchmarkResult newItem)
         {
+            if (newItem.ScanOrder <= 0)
+            {
+                newItem.ScanOrder = Interlocked.Increment(ref _scanOrderCounter);
+            }
+
             // Use BinarySearch-based extension for maximum efficiency
             Results.InsertSorted(newItem, CurrentComparer);
 
@@ -403,38 +407,12 @@ namespace ContextMenuProfiler.UI.ViewModels
             }
         }
 
-        private void ResetStats()
-        {
-            TotalExtensions = 0;
-            DisabledExtensions = 0;
-            ActiveExtensions = 0;
-            TotalLoadTime = 0;
-            ActiveLoadTime = 0;
-            DisabledLoadTime = 0;
-        }
-
-        private void AccumulateStats(BenchmarkResult item)
-        {
-            TotalExtensions += 1;
-            TotalLoadTime += item.TotalTime;
-
-            if (item.IsEnabled)
-            {
-                ActiveExtensions += 1;
-                ActiveLoadTime += item.TotalTime;
-            }
-            else
-            {
-                DisabledExtensions += 1;
-                DisabledLoadTime += item.TotalTime;
-            }
-        }
-
         private Comparison<BenchmarkResult> CurrentComparer => SelectedSortIndex switch
         {
             0 => (a, b) => b.TotalTime.CompareTo(a.TotalTime), // Time Desc
             1 => (a, b) => a.TotalTime.CompareTo(b.TotalTime), // Time Asc
             2 => (a, b) => string.Compare(a.Name, b.Name, StringComparison.OrdinalIgnoreCase), // Name
+            3 => (a, b) => b.ScanOrder.CompareTo(a.ScanOrder), // Latest Scanned First
             _ => (a, b) => b.TotalTime.CompareTo(a.TotalTime)
         };
 
@@ -442,8 +420,8 @@ namespace ContextMenuProfiler.UI.ViewModels
         private async Task PickAndScanFile()
         {
             var dialog = new Microsoft.Win32.OpenFileDialog();
-            dialog.Title = "Select a file to analyze context menu";
-            dialog.Filter = "All files (*.*)|*.*";
+            dialog.Title = LocalizationService.Instance["Dashboard.Dialog.SelectFileTitle"];
+            dialog.Filter = LocalizationService.Instance["Dashboard.Dialog.AllFilesFilter"];
             
             if (dialog.ShowDialog() == true)
             {
@@ -458,11 +436,12 @@ namespace ContextMenuProfiler.UI.ViewModels
 
             _lastScanMode = "File";
             _lastScanPath = filePath;
-            StatusText = $"Scanning: {filePath}";
+            StatusText = string.Format(LocalizationService.Instance["Dashboard.Status.ScanningFile"], filePath);
             IsBusy = true;
+            _scanOrderCounter = 0;
             Results.Clear();
             DisplayResults.Clear(); // Clear display
-            RealLoadTime = "Measuring...";
+            RealLoadTime = LocalizationService.Instance["Dashboard.RealLoad.Measuring"];
 
             try
             {
@@ -494,8 +473,8 @@ namespace ContextMenuProfiler.UI.ViewModels
                         InsertSorted(res);
                     }
                     UpdateStats();
-                    StatusText = $"Scan complete. Found {results.Count} extensions.";
-                    NotificationService.Instance.ShowSuccess("Scan Complete", $"Found {results.Count} extensions for {System.IO.Path.GetFileName(filePath)}.");
+                    StatusText = string.Format(LocalizationService.Instance["Dashboard.Status.ScanComplete"], results.Count);
+                    NotificationService.Instance.ShowSuccess(LocalizationService.Instance["Dashboard.Notify.ScanComplete.Title"], string.Format(LocalizationService.Instance["Dashboard.Notify.ScanCompleteForFile.Message"], results.Count, System.IO.Path.GetFileName(filePath)));
                 }
 
                 // Run Real-World Benchmark (Parallel but after discovery to avoid COM conflicts if any)
@@ -503,10 +482,10 @@ namespace ContextMenuProfiler.UI.ViewModels
             }
             catch (Exception ex)
             {
-                StatusText = "Scan failed.";
+                StatusText = LocalizationService.Instance["Dashboard.Status.ScanFailed"];
                 LogService.Instance.Error("File Scan Failed", ex);
-                NotificationService.Instance.ShowError("Scan Failed", ex.Message);
-                RealLoadTime = "Error";
+                NotificationService.Instance.ShowError(LocalizationService.Instance["Dashboard.Notify.ScanFailed.Title"], ex.Message);
+                RealLoadTime = LocalizationService.Instance["Dashboard.RealLoad.Error"];
             }
             finally
             {
@@ -525,12 +504,30 @@ namespace ContextMenuProfiler.UI.ViewModels
                 }
                 else
                 {
-                    RealLoadTime = "Failed";
+                    RealLoadTime = LocalizationService.Instance["Dashboard.RealLoad.Failed"];
                 }
             }
             catch
             {
-                RealLoadTime = "Error";
+                RealLoadTime = LocalizationService.Instance["Dashboard.RealLoad.Error"];
+            }
+        }
+
+        private void ApplyLocalizedCategoryNames()
+        {
+            Categories = new ObservableCollection<CategoryItem>
+            {
+                new CategoryItem { Name = LocalizationService.Instance["Dashboard.Category.All"], Tag = "All", Icon = SymbolRegular.TableMultiple20, IsActive = true },
+                new CategoryItem { Name = LocalizationService.Instance["Dashboard.Category.Files"], Tag = "File", Icon = SymbolRegular.Document20 },
+                new CategoryItem { Name = LocalizationService.Instance["Dashboard.Category.Folders"], Tag = "Folder", Icon = SymbolRegular.Folder20 },
+                new CategoryItem { Name = LocalizationService.Instance["Dashboard.Category.Background"], Tag = "Background", Icon = SymbolRegular.Image20 },
+                new CategoryItem { Name = LocalizationService.Instance["Dashboard.Category.Drives"], Tag = "Drive", Icon = SymbolRegular.HardDrive20 },
+                new CategoryItem { Name = LocalizationService.Instance["Dashboard.Category.UwpModern"], Tag = "UWP", Icon = SymbolRegular.Box20 },
+                new CategoryItem { Name = LocalizationService.Instance["Dashboard.Category.StaticVerbs"], Tag = "Static", Icon = SymbolRegular.PuzzlePiece20 }
+            };
+            if (SelectedCategoryIndex < 0 || SelectedCategoryIndex >= Categories.Count)
+            {
+                SelectedCategoryIndex = 0;
             }
         }
         

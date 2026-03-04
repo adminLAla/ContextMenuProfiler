@@ -1,7 +1,6 @@
 using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
-using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Runtime.InteropServices;
@@ -30,6 +29,11 @@ namespace ContextMenuProfiler.UI.Core
         public long InitTime { get; set; }
         public long CreateTime { get; set; }
         public long QueryTime { get; set; }
+        public long WallClockTime { get; set; }
+        public long LockWaitTime { get; set; }
+        public long ConnectTime { get; set; }
+        public long IpcRoundTripTime { get; set; }
+        public long ScanOrder { get; set; }
         
         // Extended Info
         public string? PackageName { get; set; }
@@ -52,38 +56,13 @@ namespace ContextMenuProfiler.UI.Core
 
     public class BenchmarkService
     {
-        private sealed class HookProbeState
+        private static readonly string[] KnownUnstableHandlerTokens =
         {
-            private int _consecutiveTransportFailures;
-            private int _skipBudget;
-
-            public void MarkSuccess()
-            {
-                Interlocked.Exchange(ref _consecutiveTransportFailures, 0);
-                Interlocked.Exchange(ref _skipBudget, 0);
-            }
-
-            public void MarkTransportFailure()
-            {
-                int failures = Interlocked.Increment(ref _consecutiveTransportFailures);
-                // Avoid an all-or-nothing global fallback. Throttle briefly, then probe again.
-                if (failures >= 6)
-                {
-                    Interlocked.Exchange(ref _consecutiveTransportFailures, 0);
-                    Interlocked.Exchange(ref _skipBudget, 6);
-                }
-            }
-
-            public bool ShouldTemporarilySkipProbe()
-            {
-                while (true)
-                {
-                    int budget = Interlocked.CompareExchange(ref _skipBudget, 0, 0);
-                    if (budget <= 0) return false;
-                    if (Interlocked.CompareExchange(ref _skipBudget, budget - 1, budget) == budget) return true;
-                }
-            }
-        }
+            "PintoStartScreen",
+            "NvcplDesktopContext",
+            "NvAppDesktopContext",
+            "NVIDIA CPL Context Menu Extension"
+        };
 
         public List<BenchmarkResult> RunSystemBenchmark(ScanMode mode = ScanMode.Targeted)
         {
@@ -95,46 +74,11 @@ namespace ContextMenuProfiler.UI.Core
         {
             var allResults = new ConcurrentBag<BenchmarkResult>();
             var resultsMap = new ConcurrentDictionary<Guid, BenchmarkResult>();
-            // Keep parallelism conservative: shell extension probing happens in Explorer
-            // and aggressive fan-out can cause system stutter.
-            int maxParallelism = mode == ScanMode.Full ? 2 : 3;
-            var semaphore = new SemaphoreSlim(maxParallelism);
-            var hookProbeState = new HookProbeState();
+            var semaphore = new SemaphoreSlim(8);
             
             using (var fileContext = ShellTestContext.Create(false))
-            using (var folderContext = ShellTestContext.Create(true))
             {
-                string driveContextPath = Environment.GetEnvironmentVariable("SystemDrive") ?? "C:";
-                if (!driveContextPath.EndsWith("\\", StringComparison.Ordinal)) driveContextPath += "\\";
-                if (!Directory.Exists(driveContextPath)) driveContextPath = folderContext.Path;
-
-                // 1. Scan UWP/Packaged extensions first.
-                // If a legacy COM handler destabilizes hook later, we still keep UWP measurements.
-                var uwpTasks = PackageScanner.ScanPackagedExtensions(null)
-                    .Where(r => r.Clsid.HasValue)
-                    .Select(async uwpResult =>
-                {
-                    await semaphore.WaitAsync();
-                    try
-                    {
-                        Guid clsid = uwpResult.Clsid!.Value;
-                        if (!resultsMap.TryAdd(clsid, uwpResult)) return;
-
-                        uwpResult.Category = "UWP";
-                        await EnrichBenchmarkResultAsync(uwpResult, fileContext.Path, folderContext.Path, hookProbeState);
-
-                        uwpResult.IsEnabled = !ExtensionManager.IsExtensionBlocked(clsid);
-                        uwpResult.LocationSummary = "Modern Shell (UWP)";
-
-                        allResults.Add(uwpResult);
-                        progress?.Report(uwpResult);
-                    }
-                    finally { semaphore.Release(); }
-                });
-
-                await Task.WhenAll(uwpTasks);
-
-                // 2. Scan All Registry Handlers (COM)
+                // 1. Scan All Registry Handlers (COM)
                 var registryHandlers = RegistryScanner.ScanHandlers(mode);
                 var comTasks = registryHandlers.Select(async clsidEntry =>
                 {
@@ -143,7 +87,7 @@ namespace ContextMenuProfiler.UI.Core
                     {
                         var clsid = clsidEntry.Key;
                         var handlerInfos = clsidEntry.Value;
-
+                        
                         if (resultsMap.ContainsKey(clsid)) return;
                         var meta = QueryClsidMetadata(clsid);
                         var result = new BenchmarkResult
@@ -158,13 +102,11 @@ namespace ContextMenuProfiler.UI.Core
                         };
 
                         if (string.IsNullOrEmpty(result.Name)) result.Name = $"Unknown ({clsid})";
-                        if (!resultsMap.TryAdd(clsid, result)) return;
-
+                        
+                        resultsMap[clsid] = result;
                         result.Category = DetermineCategory(result.RegistryEntries.Select(e => e.Location));
-                        string primaryContextPath = PickPrimaryContext(result, fileContext.Path, folderContext.Path, driveContextPath);
-                        string secondaryContextPath = PickSecondaryContext(result, fileContext.Path, folderContext.Path, driveContextPath);
 
-                        await EnrichBenchmarkResultAsync(result, primaryContextPath, secondaryContextPath, hookProbeState);
+                        await EnrichBenchmarkResultAsync(result, fileContext.Path);
 
                         bool isBlocked = ExtensionManager.IsExtensionBlocked(clsid);
                         bool hasDisabledPath = result.RegistryEntries.Any(e => e.Location.Contains("[Disabled]"));
@@ -179,7 +121,7 @@ namespace ContextMenuProfiler.UI.Core
 
                 await Task.WhenAll(comTasks);
 
-                // 3. Scan Static Verbs
+                // 2. Scan Static Verbs
                 var staticVerbs = RegistryScanner.ScanStaticVerbs();
                 foreach (var verbEntry in staticVerbs)
                 {
@@ -192,14 +134,14 @@ namespace ContextMenuProfiler.UI.Core
                     {
                         Name = name,
                         Type = "Static",
-                        Status = "OK",
+                        Status = "Static (Not Measured)",
                         BinaryPath = ExtractExecutablePath(command),
-                        RegistryEntries = paths.Select(p => new RegistryHandlerInfo
-                        {
-                            Path = p,
-                            Location = $"Registry (Shell) - {p.Split('\\')[0]}"
+                        RegistryEntries = paths.Select(p => new RegistryHandlerInfo { 
+                            Path = p, 
+                            Location = $"Registry (Shell) - {p.Split('\\')[0]}" 
                         }).ToList(),
                         InterfaceType = "Static Verb",
+                        DetailedStatus = "Static shell verbs do not go through Hook COM probing and are displayed as not measured.",
                         TotalTime = 0,
                         Category = "Static"
                     };
@@ -213,95 +155,45 @@ namespace ContextMenuProfiler.UI.Core
                     progress?.Report(verbResult);
                 }
 
+                // 3. Scan UWP Extensions (Parallelized)
+                var uwpTasks = PackageScanner.ScanPackagedExtensions(null)
+                    .Where(r => r.Clsid.HasValue && !resultsMap.ContainsKey(r.Clsid.Value))
+                    .Select(async uwpResult => 
+                    {
+                        await semaphore.WaitAsync();
+                        try 
+                        {
+                            uwpResult.Category = "UWP";
+                            await EnrichBenchmarkResultAsync(uwpResult, fileContext.Path);
+                            
+                            uwpResult.IsEnabled = !ExtensionManager.IsExtensionBlocked(uwpResult.Clsid!.Value);
+                            uwpResult.LocationSummary = "Modern Shell (UWP)";
+                            
+                            allResults.Add(uwpResult);
+                            progress?.Report(uwpResult);
+                        }
+                        finally { semaphore.Release(); }
+                    });
+
+                await Task.WhenAll(uwpTasks);
+
                 return allResults.ToList();
             }
         }
 
-        private static bool IsBetterHookData(HookResponse? candidate, HookResponse? baseline)
-        {
-            if (candidate == null) return false;
-            if (baseline == null) return true;
-
-            if (candidate.success && !baseline.success) return true;
-
-            if (candidate.success && baseline.success)
-            {
-                bool candidateHasNames = !string.IsNullOrEmpty(candidate.names);
-                bool baselineHasNames = !string.IsNullOrEmpty(baseline.names);
-                if (candidateHasNames && !baselineHasNames) return true;
-            }
-
-            return false;
-        }
-
-        private static bool IsMscoreeShim(string? binaryPath)
-        {
-            if (string.IsNullOrWhiteSpace(binaryPath)) return false;
-            return binaryPath.Equals("mscoree.dll", StringComparison.OrdinalIgnoreCase) ||
-                   binaryPath.EndsWith("\\mscoree.dll", StringComparison.OrdinalIgnoreCase) ||
-                   binaryPath.EndsWith("/mscoree.dll", StringComparison.OrdinalIgnoreCase);
-        }
-
-        private static string NormalizeWellKnownBinaryPath(string? binaryPath)
-        {
-            if (string.IsNullOrWhiteSpace(binaryPath)) return "";
-            if (Path.IsPathRooted(binaryPath)) return binaryPath;
-
-            // mscoree is a system shim dll; registry commonly stores only file name.
-            if (binaryPath.Equals("mscoree.dll", StringComparison.OrdinalIgnoreCase))
-            {
-                var systemPath = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.System), "mscoree.dll");
-                if (File.Exists(systemPath)) return systemPath;
-            }
-
-            return binaryPath;
-        }
-
-        private static string PickPrimaryContext(BenchmarkResult result, string fileContextPath, string folderContextPath, string driveContextPath)
-        {
-            return result.Category switch
-            {
-                "Folder" => folderContextPath,
-                "Background" => folderContextPath,
-                "Drive" => driveContextPath,
-                _ => fileContextPath
-            };
-        }
-
-        private static string PickSecondaryContext(BenchmarkResult result, string fileContextPath, string folderContextPath, string driveContextPath)
-        {
-            return result.Category switch
-            {
-                "Folder" => fileContextPath,
-                "Background" => fileContextPath,
-                "Drive" => folderContextPath,
-                _ => folderContextPath
-            };
-        }
-
-        private async Task EnrichBenchmarkResultAsync(BenchmarkResult result, string contextPath, string? secondaryContextPath, HookProbeState hookProbeState)
+        private async Task EnrichBenchmarkResultAsync(BenchmarkResult result, string contextPath)
         {
             if (!result.Clsid.HasValue) return;
 
-            if (hookProbeState.ShouldTemporarilySkipProbe())
+            if (IsKnownUnstableHandler(result))
             {
-                if (result.Status == "Unknown" || result.Status == "OK")
-                {
-                    result.Status = "Registry Fallback";
-                    result.DetailedStatus = "Hook service is temporarily throttled after repeated timeouts. This item was measured in fallback mode.";
-                }
-                return;
-            }
-
-            // Normalize known shim paths first so existence checks are accurate.
-            result.BinaryPath = NormalizeWellKnownBinaryPath(result.BinaryPath);
-
-            // Managed COM shim handlers (mscoree) are a known source of explorer stalls in probe mode.
-            // Skip active hook probing for stability.
-            if (result.Type == "COM" && IsMscoreeShim(result.BinaryPath))
-            {
-                result.Status = "Registry Fallback";
-                result.DetailedStatus = "Skipped active timing for managed COM shim (mscoree.dll) to avoid Explorer freezes. Displayed metadata is from registry.";
+                result.Status = "Skipped (Known Unstable)";
+                result.DetailedStatus = "Skipped Hook invocation for a known unstable system handler to avoid scan-wide IPC stalls.";
+                result.InterfaceType = "Skipped";
+                result.CreateTime = 0;
+                result.InitTime = 0;
+                result.QueryTime = 0;
+                result.TotalTime = 0;
                 return;
             }
 
@@ -312,40 +204,26 @@ namespace ContextMenuProfiler.UI.Core
                 result.DetailedStatus = $"The file '{result.BinaryPath}' was not found on disk. This extension is likely corrupted or uninstalled.";
             }
 
-            var hookData = await HookIpcClient.GetHookDataAsync(result.Clsid.Value.ToString("B"), contextPath, result.BinaryPath);
-
-            // Retry once on transport failure (server can be briefly busy because pipe handling is serialized).
-            if (hookData == null)
-            {
-                await Task.Delay(120);
-                hookData = await HookIpcClient.GetHookDataAsync(result.Clsid.Value.ToString("B"), contextPath, result.BinaryPath);
-            }
-
-            // Context-sensitive retry: many handlers are file/folder/drive specific.
-            bool shouldTrySecondaryContext =
-                !string.IsNullOrWhiteSpace(secondaryContextPath) &&
-                !string.Equals(contextPath, secondaryContextPath, StringComparison.OrdinalIgnoreCase) &&
-                (hookData == null || (hookData.success && string.IsNullOrEmpty(hookData.names)));
-
-            if (shouldTrySecondaryContext)
-            {
-                var secondProbe = await HookIpcClient.GetHookDataAsync(result.Clsid.Value.ToString("B"), secondaryContextPath!, result.BinaryPath);
-                if (hookData == null || IsBetterHookData(secondProbe, hookData))
-                {
-                    hookData = secondProbe;
-                }
-            }
+            var hookCall = await HookIpcClient.GetHookDataAsync(result.Clsid.Value.ToString("B"), contextPath, result.BinaryPath);
+            var hookData = hookCall.data;
+            result.WallClockTime = hookCall.total_ms;
+            result.LockWaitTime = hookCall.lock_wait_ms;
+            result.ConnectTime = hookCall.connect_ms;
+            result.IpcRoundTripTime = hookCall.roundtrip_ms;
 
             if (hookData != null && hookData.success)
             {
-                hookProbeState.MarkSuccess();
                 result.InterfaceType = hookData.@interface;
                 if (!string.IsNullOrEmpty(hookData.names))
                 {
-                    result.Name = hookData.names.Replace("|", ", ");
+                    // Keep packaged/UWP display names stable to avoid garbled menu-title replacements.
+                    if (!string.Equals(result.Type, "UWP", StringComparison.OrdinalIgnoreCase))
+                    {
+                        result.Name = hookData.names.Replace("|", ", ");
+                    }
                     if (result.Status == "Unknown") result.Status = "Verified via Hook";
                 }
-                else if (result.Status == "Unknown")
+                else if (result.Status == "Unknown" || result.Status == "OK")
                 {
                     result.Status = "Hook Loaded (No Menu)";
                     result.DetailedStatus = "The extension was loaded by the Hook service but it did not provide any context menu items for the test context.";
@@ -371,15 +249,51 @@ namespace ContextMenuProfiler.UI.Core
             }
             else if (hookData == null)
             {
-                hookProbeState.MarkTransportFailure();
-                // Preserve explicit hard-failure statuses, otherwise surface fallback clearly.
-                if (!string.Equals(result.Status, "Load Error", StringComparison.OrdinalIgnoreCase) &&
-                    !string.Equals(result.Status, "Orphaned / Missing DLL", StringComparison.OrdinalIgnoreCase))
+                if (result.Status != "Load Error" && result.Status != "Orphaned / Missing DLL")
                 {
-                    result.Status = "Registry Fallback";
-                    result.DetailedStatus = "The Hook service could not be reached or timed out. Timing data is unavailable for this item.";
+                    if (string.Equals(result.Type, "UWP", StringComparison.OrdinalIgnoreCase))
+                    {
+                        result.Status = "Unsupported (UWP)";
+                        result.DetailedStatus = "This UWP/packaged extension could not be benchmarked via current Hook path on this system.";
+                    }
+                    else
+                    {
+                        result.Status = "Registry Fallback";
+                        result.DetailedStatus = "The Hook service could not be reached or failed to process this extension. Data is based on registry scan only.";
+                    }
                 }
             }
+        }
+
+        private static bool IsKnownUnstableHandler(BenchmarkResult result)
+        {
+            if (!string.IsNullOrWhiteSpace(result.Name) &&
+                KnownUnstableHandlerTokens.Any(token => result.Name.Contains(token, StringComparison.OrdinalIgnoreCase)))
+            {
+                return true;
+            }
+
+            if (!string.IsNullOrWhiteSpace(result.FriendlyName) &&
+                KnownUnstableHandlerTokens.Any(token => result.FriendlyName.Contains(token, StringComparison.OrdinalIgnoreCase)))
+            {
+                return true;
+            }
+
+            if (result.RegistryEntries != null)
+            {
+                foreach (var entry in result.RegistryEntries)
+                {
+                    if ((!string.IsNullOrWhiteSpace(entry.Location) &&
+                         KnownUnstableHandlerTokens.Any(token => entry.Location.Contains(token, StringComparison.OrdinalIgnoreCase))) ||
+                        (!string.IsNullOrWhiteSpace(entry.Path) &&
+                         KnownUnstableHandlerTokens.Any(token => entry.Path.Contains(token, StringComparison.OrdinalIgnoreCase))))
+                    {
+                        return true;
+                    }
+                }
+            }
+
+            return false;
         }
 
         private ClsidMetadata QueryClsidMetadata(Guid clsid, int depth = 0)
