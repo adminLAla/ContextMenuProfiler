@@ -47,12 +47,21 @@ jobs:
         Compress-Archive -Path artifacts\ContextMenuProfiler-win-x64-framework-dependent\* -DestinationPath artifacts\ContextMenuProfiler-win-x64-framework-dependent.zip -Force
         Compress-Archive -Path artifacts\ContextMenuProfiler-win-x64-self-contained\* -DestinationPath artifacts\ContextMenuProfiler-win-x64-self-contained.zip -Force
 
+    - name: Verify release assets
+      shell: powershell
+      run: |
+        Get-ChildItem artifacts -File | Format-Table Name,Length
+        if (!(Test-Path "artifacts/ContextMenuProfiler-win-x64-framework-dependent.zip")) { throw "framework-dependent zip missing" }
+        if (!(Test-Path "artifacts/ContextMenuProfiler-win-x64-self-contained.zip")) { throw "self-contained zip missing" }
+
     - name: Create GitHub Release
       uses: softprops/action-gh-release@v2
       with:
         draft: false
         prerelease: false
         generate_release_notes: true
+        fail_on_unmatched_files: true
+        overwrite_files: true
         files: |
-          artifacts\ContextMenuProfiler-win-x64-framework-dependent.zip
-          artifacts\ContextMenuProfiler-win-x64-self-contained.zip
+          artifacts/ContextMenuProfiler-win-x64-framework-dependent.zip
+          artifacts/ContextMenuProfiler-win-x64-self-contained.zip
