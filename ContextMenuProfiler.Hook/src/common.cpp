@@ -13,7 +13,17 @@ const IID IID_IContextMenu_  = {0x000214E4,0x0000,0x0000,{0xC0,0x00,0x00,0x00,0x
 const IID IID_IContextMenu2_ = {0x000214F4,0x0000,0x0000,{0xC0,0x00,0x00,0x00,0x00,0x00,0x00,0x46}};
 const IID IID_IShellExtInit_ = {0x000214E8,0x0000,0x0000,{0xC0,0x00,0x00,0x00,0x00,0x00,0x00,0x46}};
 
+static bool IsEnvFlagEnabled(const wchar_t* name) {
+    wchar_t value[16] = {};
+    DWORD len = GetEnvironmentVariableW(name, value, ARRAYSIZE(value));
+    if (len == 0 || len >= ARRAYSIZE(value)) return false;
+    return value[0] == L'1' || value[0] == L'Y' || value[0] == L'y' || value[0] == L'T' || value[0] == L't';
+}
+
 void LogToFile(const wchar_t* fmt, ...) {
+    static const bool s_enableFileLog = IsEnvFlagEnabled(L"CMP_HOOK_LOG");
+    if (!s_enableFileLog) return;
+
     wchar_t logPath[MAX_PATH];
     swprintf_s(logPath, L"%ls\\hook_internal.log", GetModuleDirectory().c_str());
     va_list args; va_start(args, fmt);

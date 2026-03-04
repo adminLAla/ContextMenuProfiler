@@ -1,4 +1,6 @@
 @echo off
+cd /d "%~dp0.."
+
 echo Stopping Explorer...
 taskkill /F /IM explorer.exe >nul 2>&1
 timeout /t 2 /nobreak >nul

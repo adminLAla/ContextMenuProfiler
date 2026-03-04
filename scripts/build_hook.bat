@@ -1,5 +1,11 @@
 @echo off
+cd /d "%~dp0.."
+
 echo Building ContextMenuProfiler.Hook (x64) - Modularized...
+set "BUILD_DIR=.build\hook"
+set "OBJ_DIR=%BUILD_DIR%\obj"
+if not exist "%BUILD_DIR%" mkdir "%BUILD_DIR%"
+if not exist "%OBJ_DIR%" mkdir "%OBJ_DIR%"
 
 :: Check if cl.exe is already in the path and configured for x64
 :: We use 'where' which is more stable in both CMD and PowerShell
@@ -35,7 +41,7 @@ if exist "%VS_PATH%\VC\Auxiliary\Build\vcvars64.bat" (
 
 :compile
 :: Build Hook DLL
-cl /LD /MT /Zi /EHsc /utf-8 /Fe:ContextMenuProfiler.Hook.dll ^
+cl /LD /MT /Zi /EHsc /utf-8 /Fo"%OBJ_DIR%\\" /Fd"%BUILD_DIR%\\vc140.pdb" ^
     ContextMenuProfiler.Hook\src\dllmain.cpp ^
     ContextMenuProfiler.Hook\src\common.cpp ^
     ContextMenuProfiler.Hook\src\ipc_server.cpp ^
@@ -47,15 +53,19 @@ cl /LD /MT /Zi /EHsc /utf-8 /Fe:ContextMenuProfiler.Hook.dll ^
     ContextMenuProfiler.Hook\src\hde\hde32.c ^
     ContextMenuProfiler.Hook\src\hde\hde64.c ^
     /I ContextMenuProfiler.Hook\include ^
-    /link /DLL /DEBUG user32.lib ole32.lib shell32.lib shlwapi.lib advapi32.lib gdiplus.lib comctl32.lib gdi32.lib
+    /link /DLL /DEBUG /OUT:"%BUILD_DIR%\\ContextMenuProfiler.Hook.dll" /PDB:"%BUILD_DIR%\\ContextMenuProfiler.Hook.pdb" /IMPLIB:"%BUILD_DIR%\\ContextMenuProfiler.Hook.lib" user32.lib ole32.lib shell32.lib shlwapi.lib advapi32.lib gdiplus.lib comctl32.lib gdi32.lib
 if %ERRORLEVEL% NEQ 0 exit /b %ERRORLEVEL%
 
 echo Building Injector...
-cl /MT /Zi /EHsc /utf-8 /Fe:ContextMenuProfiler.Injector.exe ^
+cl /MT /Zi /EHsc /utf-8 /Fo"%OBJ_DIR%\\" /Fd"%BUILD_DIR%\\vc140.pdb" ^
     ContextMenuProfiler.Hook\src\injector.cpp ^
     /I ContextMenuProfiler.Hook\include ^
-    /link /DEBUG user32.lib kernel32.lib advapi32.lib
+    /link /DEBUG /OUT:"%BUILD_DIR%\\ContextMenuProfiler.Injector.exe" /PDB:"%BUILD_DIR%\\ContextMenuProfiler.Injector.pdb" user32.lib kernel32.lib advapi32.lib
 if %ERRORLEVEL% NEQ 0 exit /b %ERRORLEVEL%
+
+copy /Y "%BUILD_DIR%\ContextMenuProfiler.Hook.dll" "ContextMenuProfiler.Hook.dll" >nul
+copy /Y "%BUILD_DIR%\ContextMenuProfiler.Injector.exe" "ContextMenuProfiler.Injector.exe" >nul
+if %ERRORLEVEL% NEQ 0 exit /b 1
 
 echo Done.
 exit /b 0
